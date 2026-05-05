@@ -142,8 +142,10 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
+	filtered := filterEmptyRoles(user.Roles)
+
 	// Update roles
-	state.Roles = make([]types.String, len(user.Roles))
+	state.Roles = make([]types.String, len(filtered))
 	for i, role := range user.Roles {
 		state.Roles[i] = types.StringValue(role)
 	}
@@ -182,12 +184,11 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// Update roles
 	// First, revoke all existing roles (only non-empty roles)
 	if len(state.Roles) > 0 {
-		roles := make([]string, 0, len(state.Roles))
+		rawRoles := make([]string, 0, len(state.Roles))
 		for _, role := range state.Roles {
-			if role.ValueString() != "" {
-				roles = append(roles, role.ValueString())
-			}
+			rawRoles = append(rawRoles, role.ValueString())
 		}
+		roles := filterEmptyRoles(rawRoles)
 		if len(roles) > 0 {
 			_, err := authUserAPI.RevokeUser(ctx, plan.Username.ValueString(), roles)
 			if err != nil {
@@ -254,4 +255,14 @@ func (r *userResource) ImportState(ctx context.Context, req resource.ImportState
 		"Password Required After Import",
 		"The password attribute cannot be imported from etcd. Please set the password in your configuration.",
 	)
+}
+
+func filterEmptyRoles(roles []string) []string {
+	result := make([]string, 0, len(roles))
+	for _, r := range roles {
+		if r != "" {
+			result = append(result, r)
+		}
+	}
+	return result
 }
