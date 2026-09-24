@@ -16,6 +16,13 @@ etcdv2 Key-value resource
 resource "etcdv2_keyvalue" "hello_world" {
   key   = "/root/hello"
   value = "world"
+
+  # Optional: overwrite the key if it already exists (e.g. after losing state).
+  # Without this, create fails on an existing key(s).
+  # 'terraform import' can be used as an alternative, however this can get cumbersome
+  # when dealing with a large amount of keys.
+  # Default: false
+  # overwrite_on_create = true
 }
 ```
 
@@ -26,6 +33,10 @@ resource "etcdv2_keyvalue" "hello_world" {
 
 - `key` (String) The unique location of this resource (e.g. '/foo/bar')
 - `value` (String) The data stored in this resource
+
+### Optional
+
+- `overwrite_on_create` (Boolean) If the key already exists at apply time (e.g. the state file was lost), overwrite it with the configured value instead of failing. If false, Create fails and 'terraform import' should be used to adopt the existing key. Defaults to false.
 
 ### Read-Only
 

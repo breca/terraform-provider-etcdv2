@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -33,6 +34,7 @@ type KeyValueResourceModel struct {
 	Key           types.String `tfsdk:"key"`
 	Value         types.String `tfsdk:"value"`
 	ModifiedIndex types.Int64  `tfsdk:"modified_index"`
+	OverwriteOnCreate types.Bool `tfsdk:"overwrite_on_create"`
 }
 
 func (r *KeyValueResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -55,6 +57,12 @@ func (r *KeyValueResource) Schema(ctx context.Context, req resource.SchemaReques
 			},
 			"modified_index": schema.Int64Attribute{
 				MarkdownDescription: "The index at which this resource was last modified",
+				Computed:            true,
+			},
+			"overwrite_on_create": schema.BoolAttribute{
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "If the key already exists at apply time (e.g. the state file was lost), overwrite it with the configured value instead of failing. If false, Create fails and 'terraform import' should be used to adopt the existing key. Defaults to false.",
+				Optional:            true,
 				Computed:            true,
 			},
 		},
@@ -97,11 +105,38 @@ func (r *KeyValueResource) Create(ctx context.Context, req resource.CreateReques
 
 	keyvalue, err := kapi.Create(context.Background(), data.Key.ValueString(), data.Value.ValueString())
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create etcd keyvalue",
-			err.Error(),
-		)
-		return
+		// If the key already exists (e.g. the state file was lost or the key
+		// was created outside Terraform) and the user has opted in, converge it
+		// to the configured value. etcd's Set is a blind overwrite, so this
+		// writes the desired state during this same apply. Otherwise, fail and
+		// point the user at the explicit import flow.
+		if cErr, ok := err.(clientv2.Error); ok && cErr.Code == clientv2.ErrorCodeNodeExist {
+			if data.OverwriteOnCreate.ValueBool() {
+				keyvalue, err = kapi.Set(context.Background(), data.Key.ValueString(), data.Value.ValueString(), nil)
+				if err != nil {
+					resp.Diagnostics.AddError(
+						"Unable to Set existing etcd keyvalue",
+						err.Error(),
+					)
+					return
+				}
+			} else {
+				resp.Diagnostics.AddError(
+					"etcd key already exists",
+					fmt.Sprintf("The key %q already exists in etcd but is not managed by this Terraform state. "+
+						"To adopt it, either run 'terraform import etcdv2_keyvalue.<name> %s', or set "+
+						"overwrite_on_create = true on this resource to overwrite its current value.",
+						data.Key.ValueString(), data.Key.ValueString()),
+				)
+				return
+			}
+		} else {
+			resp.Diagnostics.AddError(
+				"Unable to Create etcd keyvalue",
+				err.Error(),
+			)
+			return
+		}
 	}
 
 	data.Value = types.StringValue(keyvalue.Node.Value)
